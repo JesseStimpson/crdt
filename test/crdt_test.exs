@@ -79,4 +79,51 @@ defmodule CrdtTest do
     name = rpc.(Crdt, :do_test, [])
     {:ok, %{a: %{c: 1}}} = rpc.(Crdt, :get, [name])
   end
+
+  test "incr api test", %{rpc: [rpc|_]} do
+    pipe = fn x, m, f, a ->
+      rpc.(m, f, [x|a])
+    end
+    :ok = rpc.(Crdt, :for, [:incr_api])
+          |> pipe.(Crdt, :at, [:latest])
+          |> pipe.(Crdt, :increment, [:like])
+          |> pipe.(Crdt, :apply, [])
+    {:ok, %{latest: %{like: 1}}} = rpc.(Crdt, :get, [:incr_api])
+    :ok = rpc.(Crdt, :for, [:incr_api])
+          |> pipe.(Crdt, :at, [:latest])
+          |> pipe.(Crdt, :decrement, [:like])
+          |> pipe.(Crdt, :apply, [])
+    {:ok, %{latest: %{like: 0}}} = rpc.(Crdt, :get, [:incr_api])
+  end
+
+  test "lwwreg api test", %{rpc: [rpc|_]} do
+    pipe = fn x, m, f, a ->
+      rpc.(m, f, [x|a])
+    end
+    :ok = rpc.(Crdt, :for, [:lwwreg_api])
+          |> pipe.(Crdt, :at, [:latest])
+          |> pipe.(Crdt, :register, [:title, {"Hello", "World"}])
+          |> pipe.(Crdt, :apply, [])
+    {:ok, %{latest: %{title: {"Hello", "World"}}}} = rpc.(Crdt, :get, [:lwwreg_api])
+  end
+
+  test "orswot api test", %{rpc: [rpc|_]} do
+    pipe = fn x, m, f, a ->
+      rpc.(m, f, [x|a])
+    end
+    :ok = rpc.(Crdt, :for, [:orswot_api])
+          |> pipe.(Crdt, :at, [:latest])
+          |> pipe.(Crdt, :insert, [:followers, :bob])
+          |> pipe.(Crdt, :apply, [])
+    :ok = rpc.(Crdt, :for, [:orswot_api])
+          |> pipe.(Crdt, :at, [:latest])
+          |> pipe.(Crdt, :insert, [:followers, :alice])
+          |> pipe.(Crdt, :apply, [])
+    {:ok, %{latest: %{followers: [:alice, :bob]}}} = rpc.(Crdt, :get, [:orswot_api])
+    :ok = rpc.(Crdt, :for, [:orswot_api])
+          |> pipe.(Crdt, :at, [:latest])
+          |> pipe.(Crdt, :remove, [:followers, :alice])
+          |> pipe.(Crdt, :apply, [])
+    {:ok, %{latest: %{followers: [:bob]}}} = rpc.(Crdt, :get, [:orswot_api])
+  end
 end

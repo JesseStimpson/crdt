@@ -306,6 +306,19 @@ defmodule Crdt.Vnode do
     i
   end
 
+  defp crdt_fields_to_value(:riak_dt_lwwreg, term) do
+    term
+  end
+
+  defp crdt_fields_to_value(:riak_dt_orswot, list) when is_list(list) do
+    list
+  end
+
+  defp crdt_fields_to_value(unknown_type, unknown_value) do
+    IO.inspect({unknown_type, unknown_value}, label: :unknown_crdt_to_value)
+    {unknown_type, unknown_value}
+  end
+
   defp log(string, state) do
     log(string, [], state)
   end

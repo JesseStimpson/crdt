@@ -10,6 +10,8 @@ defmodule Crdt do
   @timeout 5000
   @replicas 8
 
+  defstruct name: nil, key: [], op: nil
+
   @doc """
   Hello world.
 
@@ -26,6 +28,68 @@ defmodule Crdt do
   def ring_status() do
     {:ok, ring} = :riak_core_ring_manager.get_my_ring()
     :riak_core_ring.pretty_print(ring, [:legend])
+  end
+
+  def vote(owner_id, post_id, vote_type) do
+    Crdt.for(owner_id)
+    |> Crdt.at(post_id)
+    |> Crdt.increment(vote_type)
+    |> Crdt.apply()
+  end
+
+  def for(name) do
+    %Crdt{name: name}
+  end
+
+  def at(crdt=%{key: key}, new_key) do
+    %Crdt{crdt|key: key ++ [new_key]}
+  end
+
+  def increment(crdt=%Crdt{op: nil}, cntr_key, i \\ 1) do
+    crdt_field = {cntr_key, :riak_dt_emcntr}
+    increment_op = {:update, crdt_field, {:increment, i}}
+    update_op = {:update, [increment_op]}
+    %Crdt{crdt|op: update_op}
+  end
+
+  def decrement(crdt=%Crdt{op: nil}, cntr_key, i \\ 1) do
+    crdt_field = {cntr_key, :riak_dt_emcntr}
+    increment_op = {:update, crdt_field, {:decrement, i}}
+    update_op = {:update, [increment_op]}
+    %Crdt{crdt|op: update_op}
+  end
+
+  def register(crdt=%Crdt{op: nil}, reg_key, reg_val) do
+    crdt_field = {reg_key, :riak_dt_lwwreg}
+    assign_op = {:update, crdt_field, {:assign, reg_val}}
+    update_op = {:update, [assign_op]}
+    %Crdt{crdt|op: update_op}
+  end
+
+  def insert(crdt=%Crdt{op: nil}, set_key, set_val) do
+    crdt_field = {set_key, :riak_dt_orswot}
+    add_op = {:update, crdt_field, {:add, set_val}}
+    update_op = {:update, [add_op]}
+    %Crdt{crdt|op: update_op}
+  end
+
+  def remove(crdt=%Crdt{op: nil}, set_key, set_val) do
+    crdt_field = {set_key, :riak_dt_orswot}
+    remove_op = {:update, crdt_field, {:remove, set_val}}
+    update_op = {:update, [remove_op]}
+    %Crdt{crdt|op: update_op}
+  end
+
+  def apply(crdt) when is_map(crdt) do
+    [res] = apply([crdt])
+    res
+  end
+  def apply(crdts) do
+    crdts
+    |> Enum.map(fn %{name: name, key: key, op: op} when not is_nil(op) ->
+      IO.inspect({name, key, op})
+      do_op(name, [{key, op}])
+    end)
   end
 
   def do_test() do
