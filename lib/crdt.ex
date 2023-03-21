@@ -10,6 +10,8 @@ defmodule Crdt do
   @timeout 5000
   @replicas 8
 
+  import Crdt.DefCrdt
+
   @doc """
   Hello world.
 
@@ -21,6 +23,14 @@ defmodule Crdt do
   """
   def hello do
     :world
+  end
+
+  defcrdt increment_sample(x) do
+    x[:a][:c] |> Crdt.increment()
+  end
+
+  def increment(x) do
+    x
   end
 
   def ring_status() do
