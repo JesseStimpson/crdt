@@ -3,6 +3,8 @@ defmodule Crdt.Vnode do
   defstruct partition: 0, data: %{}, watches: %{}, watch_monitors: %{}
   alias Crdt.Vnode
 
+  require Logger
+
   @impl true
   def init([partition]) do
     {:ok, %Vnode{partition: partition}}
@@ -53,6 +55,8 @@ defmodule Crdt.Vnode do
         :error -> :riak_dt_map.new()
       end
 
+    log("DO #{inspect(update)} #{pname(partition)}", state)
+
     {:ok, crdt_map} = :riak_dt_map.update(update, partition, crdt_map)
     data = Map.put(data, name, crdt_map)
     {:reply, {:ok, crdt_map}, handle_watches(name, crdt_map, %Vnode{state | data: data})}
@@ -64,6 +68,7 @@ defmodule Crdt.Vnode do
         {:reply, :ok, state}
 
       _ ->
+        log("PUT #{inspect(name)}:#{inspect(value)}", state)
         data = Map.put(data, name, value)
         {:reply, :ok, handle_watches(name, value, %Vnode{state | data: data})}
     end
@@ -108,13 +113,15 @@ defmodule Crdt.Vnode do
   end
 
   def handle_command({:delete, name}, _sender, state = %Vnode{data: data}) do
+    log("DELETE #{inspect(name)}", state)
     value = Map.get(data, name, :not_found)
     data = Map.delete(data, name)
     state = remove_all_watches(name, state)
     {:reply, {:ok, crdt_map_to_value(value)}, %Vnode{state | data: data}}
   end
 
-  def handle_command(_message, _sender, state = %Vnode{}) do
+  def handle_command(message, _sender, state = %Vnode{}) do
+    log("UNHANDLED COMMAND #{inspect(message)}", state)
     {:noreply, state}
   end
 
@@ -138,14 +145,16 @@ defmodule Crdt.Vnode do
   end
 
   @impl true
-  # TODO
+  # TODO: Finish implementing from rc_example
   def handle_handoff_command(message, sender, state) do
+    log("HANDOFF COMMAND #{inspect(message)}", state)
     {:reply, _result, state} = handle_command(message, sender, state)
     {:forward, state}
   end
 
   @impl true
   def handle_handoff_data(bin_data, state) do
+    log("HANDOFF DATA #{:erlang.size(bin_data)}", state)
     {name, value} = :erlang.binary_to_term(bin_data)
     handle_command({:merge, name, value}, :ignore, state)
   end
@@ -263,13 +272,13 @@ defmodule Crdt.Vnode do
     {:update, top_level_ops}
   end
 
-  # Key is a list of atoms that name nested maps
-  defp build_update_chain_from_key(key) do
-    # __accessed__ is a special key in every leaf map that counts the number of accesses. The riak
-    # API cannot make an empyy leaf map, so we just throw a counter in there.
-    final = {:update, [{:update, {:__accessed__, :riak_dt_emcntr}, :increment}]}
-    build_update_chain_from_key(key, final)
-  end
+#  # Key is a list of atoms that name nested maps
+#  defp build_update_chain_from_key(key) do
+#    # __accessed__ is a special key in every leaf map that counts the number of accesses. The riak
+#    # API cannot make an empyy leaf map, so we just throw a counter in there.
+#    final = {:update, [{:update, {:__accessed__, :riak_dt_emcntr}, :increment}]}
+#    build_update_chain_from_key(key, final)
+#  end
 
   # final is the list of operations to execute on the final map in the key (leaf)
   defp build_update_chain_from_key([], final) do
@@ -286,13 +295,27 @@ defmodule Crdt.Vnode do
   end
 
   defp crdt_fields_to_value(:riak_dt_map, field_list) when is_list(field_list) do
-    (for {{field_name, field_type}, field_value} <- field_list,
-        do:
-          {field_name, crdt_fields_to_value(field_type, field_value)})
-          |> Enum.into(%{})
+    for(
+      {{field_name, field_type}, field_value} <- field_list,
+      do: {field_name, crdt_fields_to_value(field_type, field_value)}
+    )
+    |> Enum.into(%{})
   end
 
   defp crdt_fields_to_value(:riak_dt_emcntr, i) when is_integer(i) do
     i
+  end
+
+  defp log(string, state) do
+    log(string, [], state)
+  end
+
+  defp log(string, metadata, %Vnode{partition: partition}) do
+    Logger.debug("[#{pname(partition)}] " <> string, metadata)
+    :ok
+  end
+
+  defp pname(partition) do
+    :erlang.iolist_to_binary(:io_lib.format("~.36B", [partition]))
   end
 end

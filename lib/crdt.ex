@@ -3,6 +3,7 @@ defmodule Crdt do
   Documentation for `Crdt`.
   """
 
+  # Note: riak_core adds "_master" to the vnode module. That's why it looks weird
   @vnode_master Crdt.Vnode_master
   @node_service Crdt
   @bucket "crdt"
@@ -30,50 +31,147 @@ defmodule Crdt do
   def do_test() do
     name = :jms
     key = [:a]
+
     increment = fn cntr_name ->
       crdt_field = {cntr_name, :riak_dt_emcntr}
       {:update, crdt_field, :increment}
     end
+
     update = {:update, [increment.(:c)]}
     keyed_update = {key, update}
-    do_op(name, [keyed_update])
+    :ok = do_op(name, [keyed_update])
+    name
   end
 
   def do_op(name, keyed_ops) do
     # Find the closest partition, perform the action there, get the crdt as a result, merge it with the others
     doc_idx = hash_name(name)
     preflist = :riak_core_apl.get_apl(doc_idx, @replicas, @node_service)
-    case sync_command_first_success_wins(name, {:get_partition_for_name, name}, preflist, @timeout) do
+
+    case sync_command_first_success_wins(
+           name,
+           {:get_partition_for_name, name},
+           preflist,
+           @timeout
+         ) do
       {:ok, partition_id} ->
         do_op1(partition_id, preflist, name, keyed_ops)
+
       {:error, {:not_found, partition_id}} ->
         do_op1(partition_id, preflist, name, keyed_ops)
+
       error ->
         error
     end
   end
 
   defp do_op1(partition_id, preflist, name, keyed_ops) do
-    index_node = {partition_id, :proplists.get_value(partition_id, preflist)}
+    index_node = :lists.keyfind(partition_id, 1, preflist)
     losers = :proplists.delete(partition_id, preflist)
-    case :riak_core_vnode_master.sync_spawn_command(index_node, {:do, name, keyed_ops}, @vnode_master) do
+
+    case :riak_core_vnode_master.sync_spawn_command(
+           index_node,
+           {:do, name, keyed_ops},
+           @vnode_master
+         ) do
       {:ok, crdt_map} ->
         :riak_core_vnode_master.command(losers, {:merge, name, crdt_map}, :ignore, @vnode_master)
         :ok
+
       error ->
         error
     end
   end
 
-  def put(name, value), do: sync_command_first_success_wins(name, {:put, name, value}, @replicas, @timeout)
-  def get(name), do: sync_command_first_success_wins(name, {:get, name, :map}, @replicas, @timeout)
-  def delete(name), do: sync_command_first_success_wins(name, {:delete, name}, @replicas, @timeout)
+  def put(name, value),
+    do: sync_command_first_success_wins(name, {:put, name, value}, @replicas, @timeout)
+
+  def get(name),
+    do: sync_command_first_success_wins(name, {:get, name, :map}, @replicas, @timeout)
+
+  def delete(name),
+    do: sync_command_first_success_wins(name, {:delete, name}, @replicas, @timeout)
 
   def names(), do: coverage_to_list(coverage_command(:names))
   def values(), do: coverage_to_list(coverage_command(:values))
+
   def clear() do
     {:ok, %{list: []}} = coverage_to_list(coverage_command(:clear))
     :ok
+  end
+
+  def watch(name), do: Crdt.Watch.start(name, 10000)
+
+  def refresh_watch(name, receiver, ref) do
+    doc_idx = hash_name(name)
+    preflist = :riak_core_apl.get_apl(doc_idx, @replicas, @node_service)
+
+    case sync_command_first_success_wins(
+           name,
+           {:get_partition_for_name, name},
+           preflist,
+           @timeout
+         ) do
+      {:ok, partition_id} ->
+        index_node = :lists.keyfind(partition_id, 1, preflist)
+        losers = :proplists.delete(partition_id, preflist)
+        # We choose to watch first, then unwatch => duplicates, but no misses
+        res =
+          :riak_core_vnode_master.sync_spawn_command(
+            index_node,
+            {:watch, name, receiver, ref},
+            @vnode_master
+          )
+
+        :riak_core_vnode_master.command(
+          losers,
+          {:unwatch, name, receiver},
+          :ignore,
+          @vnode_master
+        )
+
+        res
+
+      error ->
+        error
+    end
+  end
+
+  def aae(name, timeout) do
+    doc_idx = hash_name(name)
+    preflist = :riak_core_apl.get_apl(doc_idx, @replicas, @node_service)
+
+    try do
+      case sync_command_all_successes(name, {:get, name, :raw}, preflist, timeout) do
+        [first_value | values] ->
+          merged_final =
+            Enum.reduce(values, first_value, fn value, merged ->
+              # Note: if Value =:= Merged riak_dt_map:merge/2 always returns the Merged,
+              # even if the data passed in isn't a riak_dt_map at all
+              try do
+                :riak_dt_map.merge(value, merged)
+              catch
+                _ ->
+                  merged
+              end
+            end)
+
+          :riak_core_vnode_master.command(
+            preflist,
+            {:merge, name, merged_final},
+            :ignore,
+            @vnode_master
+          )
+
+          :ok
+
+        [] ->
+          :ok
+      end
+    catch
+      :timeout ->
+        {:error, :timeout}
+    end
   end
 
   defp hash_name(name), do: :riak_core_util.chash_key({@bucket, :erlang.term_to_binary(name)})
@@ -98,7 +196,7 @@ defmodule Crdt do
       timeout ->
         Process.unlink(receiver_proxy)
         Process.exit(receiver_proxy, :kill)
-        raise :timeout
+        raise "timeout"
     end
   end
 
@@ -126,7 +224,7 @@ defmodule Crdt do
       timeout ->
         Process.unlink(receiver_proxy)
         Process.exit(receiver_proxy, :kill)
-        raise :timeout
+        raise "timeout"
     end
   end
 

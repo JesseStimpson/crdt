@@ -11,7 +11,8 @@ defmodule Crdt.Application do
     :ok = :riak_core_node_watcher.service_up(Crdt, self())
 
     children = [
-      %{id: Crdt.Vnode_master,
+      %{
+        id: Crdt.Vnode_master,
         start: {:riak_core_vnode_master, :start_link, [Crdt.Vnode]},
         type: :worker
       }
