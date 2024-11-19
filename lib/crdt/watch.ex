@@ -4,8 +4,8 @@ defmodule Crdt.Watch do
 
   defstruct [:name, :pid, :ref, :tick]
 
-  def start(name, tick) do
-    pid = self()
+  def start(name, tick, pid \\ nil) do
+    pid = if is_nil(pid), do: self(), else: pid
     {:ok, watch} = GenServer.start_link(Watch, %Watch{name: name, pid: pid, tick: tick})
 
     case GenServer.call(watch, :start, 5000) do

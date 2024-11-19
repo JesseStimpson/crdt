@@ -12,85 +12,139 @@ defmodule Crdt do
 
   defstruct name: nil, key: [], op: nil
 
-  @doc """
-  Hello world.
-
-  ## Examples
-
-      iex> Crdt.hello()
-      :world
-
-  """
-  def hello do
-    :world
-  end
-
   def ring_status() do
     {:ok, ring} = :riak_core_ring_manager.get_my_ring()
     :riak_core_ring.pretty_print(ring, [:legend])
   end
 
-  def vote(owner_id, post_id, vote_type) do
-    Crdt.for(owner_id)
-    |> Crdt.at(post_id)
-    |> Crdt.increment(vote_type)
-    |> Crdt.apply()
-  end
+  @doc """
+  ## Examples
 
+      iex> Crdt.for("owner_id")
+      ...> |> Crdt.at("post_id")
+      ...> |> Crdt.increment(:like)
+      %Crdt{name: "owner_id",
+        key: ["post_id"],
+        op: {:update, [{:update, {:like, :riak_dt_emcntr}, {:increment, 1}}]}}
+
+      iex> Crdt.for(:my_page)
+      ...> |> Crdt.at(:a_user)
+      ...> |> Crdt.register(:name, "alice")
+      %Crdt{name: :my_page,
+        key: [:a_user],
+        op: {:update, [{:update, {:name, :riak_dt_lwwreg}, {:assign, "alice"}}]}}
+
+      iex> Crdt.for(:my_calendar)
+      ...> |> Crdt.at(:today)
+      ...> |> Crdt.register_struct(%Date{year: 2023, month: 4, day: 5})
+      [
+        %Crdt{name: :my_calendar, key: [:today], op: {:update, [{:update, {:__struct__, :riak_dt_lwwreg}, {:assign, Date}}]}},
+        %Crdt{name: :my_calendar, key: [:today], op: {:update, [{:update, {:calendar, :riak_dt_lwwreg}, {:assign, Calendar.ISO}}]}},
+        %Crdt{name: :my_calendar, key: [:today], op: {:update, [{:update, {:day, :riak_dt_lwwreg}, {:assign, 5}}]}},
+        %Crdt{name: :my_calendar, key: [:today], op: {:update, [{:update, {:month, :riak_dt_lwwreg}, {:assign, 4}}]}},
+        %Crdt{name: :my_calendar, key: [:today], op: {:update, [{:update, {:year, :riak_dt_lwwreg}, {:assign, 2023}}]}}
+      ]
+
+  """
   def for(name) do
     %Crdt{name: name}
   end
 
-  def at(crdt=%{key: key}, new_key) do
-    %Crdt{crdt|key: key ++ [new_key]}
+  def at(crdt = %{key: key}, new_key) do
+    %Crdt{crdt | key: key ++ [new_key]}
   end
 
-  def increment(crdt=%Crdt{op: nil}, cntr_key, i \\ 1) do
+  def increment(crdt = %Crdt{op: nil}, cntr_key, i \\ 1) do
     crdt_field = {cntr_key, :riak_dt_emcntr}
     increment_op = {:update, crdt_field, {:increment, i}}
     update_op = {:update, [increment_op]}
-    %Crdt{crdt|op: update_op}
+    %Crdt{crdt | op: update_op}
   end
 
-  def decrement(crdt=%Crdt{op: nil}, cntr_key, i \\ 1) do
+  def decrement(crdt = %Crdt{op: nil}, cntr_key, i \\ 1) do
     crdt_field = {cntr_key, :riak_dt_emcntr}
     increment_op = {:update, crdt_field, {:decrement, i}}
     update_op = {:update, [increment_op]}
-    %Crdt{crdt|op: update_op}
+    %Crdt{crdt | op: update_op}
   end
 
-  def register(crdt=%Crdt{op: nil}, reg_key, reg_val) do
+  def register_struct(crdt = %Crdt{op: nil}, reg_struct) do
+    reg_struct
+    |> Map.to_list()
+    |> Enum.map(fn {k, v} ->
+      # Note: v can be a struct, but we choose not to recurse.
+      # This way, the caller is in control of what embedded kvs
+      # are tracked by crdt objects vs. just registers in the
+      # higher level crdt
+      Crdt.register(crdt, k, v)
+    end)
+  end
+
+  def register(crdt = %Crdt{op: nil}, reg_key, reg_val) do
     crdt_field = {reg_key, :riak_dt_lwwreg}
     assign_op = {:update, crdt_field, {:assign, reg_val}}
     update_op = {:update, [assign_op]}
-    %Crdt{crdt|op: update_op}
+    %Crdt{crdt | op: update_op}
   end
 
-  def insert(crdt=%Crdt{op: nil}, set_key, set_val) do
+  def insert(crdt = %Crdt{op: nil}, set_key, set_val) do
     crdt_field = {set_key, :riak_dt_orswot}
     add_op = {:update, crdt_field, {:add, set_val}}
     update_op = {:update, [add_op]}
-    %Crdt{crdt|op: update_op}
+    %Crdt{crdt | op: update_op}
   end
 
-  def remove(crdt=%Crdt{op: nil}, set_key, set_val) do
+  def remove(crdt = %Crdt{op: nil}, set_key, set_val) do
     crdt_field = {set_key, :riak_dt_orswot}
     remove_op = {:update, crdt_field, {:remove, set_val}}
     update_op = {:update, [remove_op]}
-    %Crdt{crdt|op: update_op}
+    %Crdt{crdt | op: update_op}
   end
 
-  def apply(crdt) when is_map(crdt) do
-    [res] = apply([crdt])
-    res
+  def apply(crdt) when is_struct(crdt, Crdt) do
+    apply([crdt])
   end
-  def apply(crdts) do
+
+  def apply(crdts) when is_list(crdts) do
     crdts
-    |> Enum.map(fn %{name: name, key: key, op: op} when not is_nil(op) ->
-      IO.inspect({name, key, op})
-      do_op(name, [{key, op}])
-    end)
+    |> List.flatten()
+    |> group_by_name()
+    |> apply_named_groups()
+    |> handle_apply_result()
   end
+
+  defp group_by_name(crdts) do
+    crdts
+    |> Enum.reduce(
+      %{},
+      fn
+        %Crdt{name: name, key: key, op: op}, grouped when not is_nil(op) ->
+          keyed_ops = Map.get(grouped, name, [])
+          Map.put(grouped, name, [{key, op} | keyed_ops])
+
+        _, grouped ->
+          grouped
+      end
+    )
+  end
+
+  defp apply_named_groups(grouped) do
+    grouped
+    |> Enum.map(fn {name, keyed_ops} ->
+      keyed_ops = Enum.reverse(keyed_ops)
+      IO.inspect({name, keyed_ops})
+      {name, do_op(name, keyed_ops)}
+    end)
+    |> Enum.into(%{})
+  end
+
+  # If one named crdt, then just return the result
+  # If multiple named crdts, then we return the whole map
+  defp handle_apply_result(result) when map_size(result) == 1 do
+    [{_, result}] = Map.to_list(result)
+    result
+  end
+  defp handle_apply_result(result), do: result
 
   def do_test() do
     name = :jms
@@ -164,7 +218,7 @@ defmodule Crdt do
     :ok
   end
 
-  def watch(name), do: Crdt.Watch.start(name, 10000)
+  def watch(name, pid \\ nil), do: Crdt.Watch.start(name, 10000, pid)
 
   def refresh_watch(name, receiver, ref) do
     doc_idx = hash_name(name)

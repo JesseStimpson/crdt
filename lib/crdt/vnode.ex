@@ -272,13 +272,13 @@ defmodule Crdt.Vnode do
     {:update, top_level_ops}
   end
 
-#  # Key is a list of atoms that name nested maps
-#  defp build_update_chain_from_key(key) do
-#    # __accessed__ is a special key in every leaf map that counts the number of accesses. The riak
-#    # API cannot make an empyy leaf map, so we just throw a counter in there.
-#    final = {:update, [{:update, {:__accessed__, :riak_dt_emcntr}, :increment}]}
-#    build_update_chain_from_key(key, final)
-#  end
+  #  # Key is a list of atoms that name nested maps
+  #  defp build_update_chain_from_key(key) do
+  #    # __accessed__ is a special key in every leaf map that counts the number of accesses. The riak
+  #    # API cannot make an empyy leaf map, so we just throw a counter in there.
+  #    final = {:update, [{:update, {:__accessed__, :riak_dt_emcntr}, :increment}]}
+  #    build_update_chain_from_key(key, final)
+  #  end
 
   # final is the list of operations to execute on the final map in the key (leaf)
   defp build_update_chain_from_key([], final) do
@@ -311,6 +311,7 @@ defmodule Crdt.Vnode do
   end
 
   defp crdt_fields_to_value(:riak_dt_orswot, list) when is_list(list) do
+    # Note: list is sorted by lists:sort (see riak_dt_orswot)
     list
   end
 
