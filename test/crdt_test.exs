@@ -32,7 +32,8 @@ defmodule CrdtTest do
         env = env_common ++ env_node.(idx, name)
         # LocalCluster applications and environment options do not behave well. Specifically,
         # env vars from the app file override the passed in environment, unexpectedly.
-        [node] = LocalCluster.start_nodes(name, 1, applications: [], environment: [])
+        {:ok, cluster} = LocalCluster.start_link(1, prefix: name, applications: [], environment: [])
+        {:ok, [node]} = LocalCluster.nodes(cluster)
         :pong = Node.ping(node)
         :rpc.call(node, Application, :load, [:riak_core])
         for {k, v} <- env, do: :rpc.call(node, Application, :put_env, [:riak_core, k, v])

@@ -28,8 +28,7 @@ defmodule Crdt.MixProject do
     [
       {:riak_core, git: "https://github.com/JesseStimpson/riak_core", branch: "experimental"},
       {:riak_dt, git: "https://github.com/basho/riak_dt.git", branch: "develop"},
-      {:local_cluster,
-       git: "https://github.com/whitfin/local-cluster.git", branch: "master", only: [:test]}
+      {:local_cluster, "~> 2.1"}
       # {:dep_from_hexpm, "~> 0.3.0"},
       # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"}
     ]

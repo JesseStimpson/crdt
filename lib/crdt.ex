@@ -38,10 +38,10 @@ defmodule Crdt do
       ...> |> Crdt.at(:today)
       ...> |> Crdt.register_struct(%Date{year: 2023, month: 4, day: 5})
       [
-        %Crdt{name: :my_calendar, key: [:today], op: {:update, [{:update, {:__struct__, :riak_dt_lwwreg}, {:assign, Date}}]}},
         %Crdt{name: :my_calendar, key: [:today], op: {:update, [{:update, {:calendar, :riak_dt_lwwreg}, {:assign, Calendar.ISO}}]}},
-        %Crdt{name: :my_calendar, key: [:today], op: {:update, [{:update, {:day, :riak_dt_lwwreg}, {:assign, 5}}]}},
         %Crdt{name: :my_calendar, key: [:today], op: {:update, [{:update, {:month, :riak_dt_lwwreg}, {:assign, 4}}]}},
+        %Crdt{name: :my_calendar, key: [:today], op: {:update, [{:update, {:__struct__, :riak_dt_lwwreg}, {:assign, Date}}]}},
+        %Crdt{name: :my_calendar, key: [:today], op: {:update, [{:update, {:day, :riak_dt_lwwreg}, {:assign, 5}}]}},
         %Crdt{name: :my_calendar, key: [:today], op: {:update, [{:update, {:year, :riak_dt_lwwreg}, {:assign, 2023}}]}}
       ]
 
